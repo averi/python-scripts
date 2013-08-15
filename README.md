@@ -1,4 +1,4 @@
 python-scripts
 ==============
 
-My Python scripts
+My Python scripts.
