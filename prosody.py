@@ -3,8 +3,6 @@
 # Target host: chooser.gnome.org
 # Description: script to automatize new Prosody user creation at jabber.gnome.org. Usage as
 # follows: 'python prosody.py username email'. Example: 'python prosody.py av av@gnome.org'.
-# TODO: Add some exception handling in the case the prosody daemon isn't running or accepting
-# new user's creation.
 
 import random
 import string
@@ -26,6 +24,11 @@ def create_prosody_account():
     child.sendline ('%s' % random_password)
     child.expect ('Retype new password: ')
     child.sendline ('%s' % random_password)
+    child.expect(pexpect.EOF)
+    child.close()
+
+    if child.exitstatus == 1:
+       raise Exception("There was an error creating the Prosody account, please check logs!")
 
     message = """
 Hi,
