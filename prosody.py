@@ -1,8 +1,7 @@
 #!/usr/bin/python
 # Author: Andrea Veri <av@gnome.org>
 # Target host: chooser.gnome.org
-# Description: script to automatize new Prosody user creation at jabber.gnome.org. Usage as
-# follows: 'python prosody.py username email'. Example: 'python prosody.py av av@gnome.org'.
+# Description: script to automatize new Prosody user creation at jabber.gnome.org.
 
 import random
 import string
@@ -13,8 +12,10 @@ import sys
 
 def create_prosody_account():
 
-    username = sys.argv[1]
-    email = sys.argv[2]
+    print 'Please enter the JID for the new user and the email to send instructions to,'
+    print 'additionally make sure the JID matches the LDAP UID for the user requesting the account'
+    username = raw_input('Desired username: ')
+    email = raw_input('Email to send instructions to: ')
 
     s = string.lowercase+string.digits 
     random_password = ''.join(random.sample(s, 10))
