@@ -22,21 +22,22 @@ parser.add_option("-d", "--dirs",
 parser.add_option("-l", "--long-list",
                   action="store_true", dest="long_list",
                   help="Shows owner, group, filesize, mode for each file or directory listed."
-                  " Requires -f or -d."
+                  " Requires either -f or -d."
                   )
 parser.add_option("--fpath",
                   action="store_true", dest="full_path",
-                  help="Specifies whether an absolute path should be printed"
+                  help="Specifies whether an absolute path should be printed. "
+                  " Requires either -f or -d."
                   )
 parser.add_option("--hidden",
                   action="store_true", dest="hidden",
-                  help="Shows hidden files, requires -f or -d"
+                  help="Shows hidden files, requires either -f or -d"
                   )
 
 (options, args) = parser.parse_args()
 
 if len(sys.argv) == 1:
-    print 'Not enough parameters given, try --help'
+    parser.print_help()
     sys.exit(1)
 
 def pyls():
@@ -76,15 +77,21 @@ def pyls():
 
         if not options.hidden:
             for file in directories_list:
-                if options.long_list:
+                if options.long_list and not options.full_path:
                     print_file_stats(path, file)
-                else:
+                if options.long_list and options.full_path:
+                    print_file_stats(path, file, full_path=True)
+                elif not (options.long_list or options.full_path):
                     print file
 
         if options.hidden:
             for file in hidden_directories_list:
-                if options.long_list:
+                if options.long_list and not options.full_path:
                     print_file_stats(path, file)
+                elif options.long_list and options.full_path:
+                    print_file_stats(path, file, full_path=True)
+                elif options.full_path and not options.long_list:
+                    print os.path.join(path, file)
                 else:
                     print file
 
@@ -102,34 +109,33 @@ def pyls():
                     elif os.path.isfile(fpath) and is_hidden(file):
                         hidden_files_list.append(file)
 
-                if options.hidden and options.full_path:
+                if options.hidden:
                     for file in hidden_files_list:
-                        if options.long_list:
+                        if options.long_list and not options.full_path:
                             print_file_stats(path, file)
-                        else:
+                        elif options.long_list and options.full_path:
+                            print_file_stats(path, file, full_path=True)
+                        elif options.full_path and not options.long_list:
                             print os.path.join(path, file)
-                elif options.hidden:
-                    for file in hidden_files_list:
-                        if options.long_list:
-                            print_file_stats(path, file)
                         else:
                             print file
-                elif not options.hidden and options.full_path:
+                elif not options.hidden and options.full_path and not options.long_list:
                     for file in files_list:
-                        if options.long_list:
-                            print_file_stats(path, file) + file
-                        else:
-                            print os.path.join(path, file)
+                        print os.path.join(path, file)
+                elif not options.hidden and (options.full_path and options.long_list):
+                    for file in files_list:
+                            print_file_stats(path, file, full_path=True)
                 elif not options.hidden:
                     for file in files_list:
                         if options.long_list:
                             print_file_stats(path, file)
                         else:
                             print file
-
         except OSError as e:
             print 'FAILURE: OS Error n. {0}: {1}'.format(e.errno, e.strerror)
             sys.exit(1)
+    elif not (options.files or options.dirs):
+        print "No -f or -d flags specified, check --help for more details"
     else:
         print "You can't mix the -f and -d flags, check --help for more information"
         sys.exit(1)
@@ -138,7 +144,7 @@ def is_hidden(filename):
     if filename.startswith('.'):
         return True
 
-def print_file_stats(path, filename):
+def print_file_stats(path, filename, full_path=False):
 
     stat_details = os.stat(os.path.join(path, filename))
 
@@ -156,11 +162,17 @@ def print_file_stats(path, filename):
         _hard_links = hard_links(os.path.join(path, filename))
         mode = oct(mode)[3:]
 
-        print '%s %s %s %s %s %s %s' % (mode, _hard_links, username, group, filesize, mtime, filename)
+        if full_path == False:
+            print '%s %s %s %s %s %s %s' % (mode, _hard_links, username, group, filesize, mtime, filename)
+        else:
+            print '%s %s %s %s %s %s %s' % (mode, _hard_links, username, group, filesize, mtime, os.path.join(path, filename))            
     else:
         mode = oct(mode)[4:]
 
-        print '%s %s %s %s %s %s' % (mode, username, group, filesize, mtime, filename)
+        if full_path == False:
+            print '%s %s %s %s %s %s' % (mode, username, group, filesize, mtime, filename)
+        else:
+            print '%s %s %s %s %s %s' % (mode, username, group, filesize, mtime, os.path.join(path, filename))
 
     return username, group, filesize, mode, mtime
 
