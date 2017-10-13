@@ -1,17 +1,19 @@
 #!/usr/bin/python
 
-import ldap
 import socket
-import ldap.filter
 import calendar
 import smtplib
 import string
 import sys
 import os
+
 from email.mime.text import MIMEText
 from time import strftime, gmtime, strptime, localtime, time
 from optparse import OptionParser
 from datetime import date
+
+sys.path.append('/home/admin/bin')
+from gnome_ldap_utils import *
 
 usage = "usage: %prog [options]"
 parser = OptionParser(usage)
@@ -39,91 +41,39 @@ parser.add_option("--generate-membership-list",
 
 (options, args) = parser.parse_args()
 
-LDAP_GROUP_BASE='cn=groups,cn=accounts,dc=gnome,dc=org'
-LDAP_USER_BASE='cn=users,cn=accounts,dc=gnome,dc=org'
+execfile('/home/admin/secret/freeipa')
+
+glu = Gnome_ldap_utils(LDAP_GROUP_BASE, LDAP_HOST, LDAP_USER_BASE, 'cn=Directory Manager', ldap_password)
 
 TODAY = strftime("%Y-%m-%d", gmtime())
 
-execfile('/home/admin/secret/freeipa')
-
-try:
-    l = ldap.open('account.gnome.org')
-    l.simple_bind("cn=Directory Manager", ldap_password)
-except ldap.LDAPError, e:
-        print >>sys.stderr, e
-        sys.exit(1)
-
-
-def _parse_members_from_group(group):
-
-    filter = ldap.filter.filter_format('(&(objectClass=posixgroup)(cn=%s))', (group, ))
-    results = l.search_s(LDAP_GROUP_BASE, ldap.SCOPE_SUBTREE, filter, ('member', ))
-
-    members = set()
-
-    for _, attr in results:
-        for userid in attr['member']:
-            splitentry = userid.split(',')
-            singleentry = splitentry[0]
-            splitteduid = singleentry.split('=')
-            uid = splitteduid[1]
-
-            members.add(uid)
-
-    return members
-
-
-def  _get_foundation_members():
-    foundationmembers = _parse_members_from_group('foundation')
-
-    return foundationmembers
-
-
-foundationmembers = _get_foundation_members()
-
-
-def _get_attributes_from_ldap(uid, attr):
-    filter = ldap.filter.filter_format('(uid=%s)', (uid, ))
-    results = l.search_s(LDAP_USER_BASE, ldap.SCOPE_SUBTREE, filter, ('uid', attr, ))
-
-    if len(results) > 0:
-        return results[0][1][attr][0]
-    else:
-        return None
+foundationmembers = glu.get_uids_from_group('foundation')
 
 
 def _get_foundation_fields_from_ldap():
     for member in foundationmembers:
-        first_added_attr = _get_attributes_from_ldap(member, 'FirstAdded')
-        last_renewed_on_attr = _get_attributes_from_ldap(member, 'LastRenewedOn')
-        mail_attr = _get_attributes_from_ldap(member,'mail')
-        common_name_attr = _get_attributes_from_ldap(member, 'cn')
-        userid_attr = _get_attributes_from_ldap(member, 'uid')
+        ldap_fields = glu.get_attributes_from_ldap(member, 'FirstAdded', 'LastRenewedOn', 'mail', 'cn')
+
+        first_added_attr = ldap_fields[1]
+        last_renewed_on_attr = ldap_fields[2]
+        mail_attr = ldap_fields[3]
+        common_name_attr = ldap_fields[4]
+        userid_attr = ldap_fields[0]
 
         if last_renewed_on_attr == TODAY and first_added_attr == TODAY:
-           send_form_letters(new_member_form_letter, mail_attr, common_name_attr, userid_attr)
+            send_form_letters(new_member_form_letter, mail_attr, common_name_attr, userid_attr)
         elif last_renewed_on_attr == TODAY:
-           send_form_letters(renewal_form_letter, mail_attr, common_name_attr)
+            send_form_letters(renewal_form_letter, mail_attr, common_name_attr)
         else:
-           pass
-
-
-def sync_user_to_mailusers_member(member):
-        add_members = [(ldap.MOD_ADD, 'member', 'uid=%s,cn=users,cn=accounts,dc=gnome,dc=org' % (member))]
-        l.modify_s('cn=mailusers,cn=groups,cn=accounts,dc=gnome,dc=org', add_members)
-
-
-def remove_user_from_foundation_member(member):
-        remove_members = [(ldap.MOD_DELETE, 'member', 'uid=%s,cn=users,cn=accounts,dc=gnome,dc=org' % (member))]
-        l.modify_s('cn=foundation,cn=groups,cn=accounts,dc=gnome,dc=org', remove_members)
+            pass
 
 
 def _sync_foundation_with_mailusers():
-    mailusers = _parse_members_from_group('mailusers')
+    mailusers = glu.get_uids_from_group('mailusers')
 
     for member in foundationmembers:
         if member not in mailusers:
-            sync_user_to_mailusers_member(member)
+            glu.add_user_to_ldap_group(member, 'mailusers')
 
 
 def remove_expired_memberships_from_foundation():
@@ -132,14 +82,16 @@ def remove_expired_memberships_from_foundation():
     need_renew = {}
 
     for member in foundationmembers:
-        last_renewed_on_attr = _get_attributes_from_ldap(member, 'LastRenewedOn')
+        ldap_fields = glu.get_attributes_from_ldap(member, 'LastRenewedOn', 'mail', 'cn')
+
+        last_renewed_on_attr = ldap_fields[1]
         convert_to_unix_time = calendar.timegm(strptime(last_renewed_on_attr, '%Y-%m-%d'))
-        mail_attr = _get_attributes_from_ldap(member,'mail')
-        common_name_attr = _get_attributes_from_ldap(member, 'cn')
+        mail_attr = ldap_fields[2]
+        common_name_attr = ldap_fields[3]
 
         if member in foundationmembers and convert_to_unix_time < now - 365 * 2 * 24 * 60 * 60:
             print "Removing %s from the foundation LDAP group as the membership expired on %s" % (member, last_renewed_on_attr)
-            remove_user_from_foundation_member(member)
+            glu.remove_user_from_ldap_group(member, 'foundation')
             send_form_letters(expired_membership_form_letter, mail_attr, common_name_attr, last_renewed_on_attr)
 
             need_renew.update({common_name_attr: last_renewed_on_attr})
@@ -151,19 +103,17 @@ def remove_expired_memberships_from_foundation():
 def generate_membership_list():
     import json
 
-    membershiplist = []
-    membershipdict = {}
     result = []
 
     for member in foundationmembers:
-        common_name_attr = _get_attributes_from_ldap(member, 'cn')
-        membershiplist.append(common_name_attr)
+        ldap_fields = glu.get_attributes_from_ldap(member, 'cn', 'LastRenewedOn')
+        common_name_attr = ldap_fields[1]
+        last_renewed_on_attr = ldap_fields[2]
 
-    for cn in membershiplist:
-        d = { 'common_name' : cn }
+        d = { 'common_name' : common_name_attr, 'last_renewed_on' : last_renewed_on_attr }
         result.append(d)
 
-        memberslist = json.dumps(result, ensure_ascii=False, encoding='utf8')
+    memberslist = json.dumps(result, ensure_ascii=False, encoding='utf8')
 
     if len(memberslist) > 0:
         import codecs
@@ -219,9 +169,10 @@ def subscribe_new_members():
     f = open('/tmp/new_subscribers', 'w')
 
     for member in foundationmembers:
-        first_added_attr = _get_attributes_from_ldap(member, 'FirstAdded')
-        last_renewed_on_attr = _get_attributes_from_ldap(member, 'LastRenewedOn')
-        mail_attr = _get_attributes_from_ldap(member,'mail')
+        ldap_fields = glu.get_attributes_from_ldap(member, 'FirstAdded', 'LastRenewedOn', 'mail')
+        first_added_attr = ldap_fields[1]
+        last_renewed_on_attr = ldap_fields[2]
+        mail_attr = ldap_fields[3]
 
         if first_added_attr == TODAY:
             f.write(str(mail_attr) + '\n')

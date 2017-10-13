@@ -1,50 +1,16 @@
 #!/usr/bin/python
 
-import ldap
-import ldap.filter
 import string
 import smtplib
 import sys
 import os
-import ldap.modlist as modlist
+
 from email.MIMEText import MIMEText
-
-LDAP_GROUP_BASE='cn=groups,cn=accounts,dc=gnome,dc=org'
-LDAP_USER_BASE='cn=users,cn=accounts,dc=gnome,dc=org'
-
+from gnome_ldap_utils import *
 
 execfile('/home/admin/secret/freeipa')
 
-try:
-    l = ldap.open('localhost')
-    l.simple_bind("cn=Directory Manager", ldap_password)
-except ldap.LDAPError, e:
-        print >>sys.stderr, e
-        sys.exit(1)
-
-
-def _parse_members_from_group(group):
-
-    filter = ldap.filter.filter_format('(&(objectClass=posixgroup)(cn=%s))', (group, ))
-    results = l.search_s(LDAP_GROUP_BASE, ldap.SCOPE_SUBTREE, filter, ('memberUid', ))
-
-    members = set()
-
-    for _, attr in results:
-        members.update(attr['memberUid'])
-
-
-    return members
-
-
-def _get_attributes_from_ldap(userid, attr):
-    filter = ldap.filter.filter_format('(uid=%s)', (userid, ))
-    results = l.search_s(LDAP_USER_BASE, ldap.SCOPE_SUBTREE, filter, ('uid', attr, ))
-
-    if len(results) > 0:
-        return results[0][1][attr][0]
-    else:
-        return None
+glu = Gnome_ldap_utils(LDAP_GROUP_BASE, LDAP_HOST, LDAP_USER_BASE, 'cn=Directory Manager', ldap_password)
 
 
 def gen_passwd(length=12, chars=string.letters + string.digits):
@@ -72,10 +38,10 @@ def gen_passwd(length=12, chars=string.letters + string.digits):
 
 
 def check_existing_password(userid):
-    accountsteam =  _parse_members_from_group('accounts')
-    sysadminteam =  _parse_members_from_group('sysadmin')
+    accountsteam =  glu.get_group_from_ldap('accounts')
+    sysadminteam =  glu.get_group_from_ldap('sysadmin')
 
-    if _get_attributes_from_ldap(userid, 'uid') == None:
+    if glu.get_attributes_from_ldap(userid, 'uid') == None:
        print 'The specified UID does not exist, please get in contact with the GNOME Accounts Team to know more'
        sys.exit(1)
 
@@ -87,14 +53,12 @@ def check_existing_password(userid):
 
 
 def update_password(userid):
-    getattr_name = _get_attributes_from_ldap(userid, 'cn')
-    getattr_mail = _get_attributes_from_ldap(userid, 'mail')
+    getattr_name = glu.get_attributes_from_ldap(userid, 'cn')
+    getattr_mail = glu.get_attributes_from_ldap(userid, 'mail')
 
     newpassword = {'userPassword': gen_passwd()}
 
-    replace_password = [(ldap.MOD_REPLACE, 'userPassword', newpassword['userPassword'])]
-    l.modify_s('uid=%s,cn=users,cn=accounts,dc=gnome,dc=org' % userid, replace_password)
-
+    glu.replace_ldap_password(userid, newpassword['userPassword'])
 
     send_password_to_user(getattr_name, getattr_mail, newpassword['userPassword'])
 

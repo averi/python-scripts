@@ -6,17 +6,17 @@ import os
 import sys
 import calendar
 import time
-import ldap
-import ldap.filter
 import socket
-from optparse import OptionParser
 import smtplib
+
+from optparse import OptionParser
 from email.MIMEText import MIMEText
 
-LDAP_GROUP_BASE='cn=groups,cn=accounts,dc=gnome,dc=org'
-LDAP_USER_BASE='cn=users,cn=accounts,dc=gnome,dc=org'
+from gnome_ldap_utils import *
 
 execfile('/home/admin/secret/freeipa')
+
+glu = Gnome_ldap_utils(LDAP_GROUP_BASE, LDAP_HOST, LDAP_USER_BASE, 'cn=Directory Manager', ldap_password)
 
 parser = OptionParser()
 parser.add_option("--print-inactive-accounts", action="store_true", default=False,
@@ -31,7 +31,7 @@ if socket.gethostname() != 'git.gnome.org':
     print ("You are not allowed to run this script on a different host than git.gnome.org, exiting...", end='\n')
     sys.exit(1)
 
-infrastructure_folders = 'archive', 'cgit', 'empty-description', 'repositories.txt', 'repositories.doap'
+infrastructure_folders = 'archive', 'cgit', 'empty-description', 'repositories.txt', 'repositories.doap', 'moved_to_gitlab'
 repositories = filter( lambda f: not f.startswith(infrastructure_folders), os.listdir('/git'))
 last_pushed_times = {}
 
@@ -58,74 +58,22 @@ def user_is_current(username):
      return username in last_pushed_times and last_pushed_times[username] >= now - 2 * 365 * 24 * 60 * 60
 
 
-try:
-    l = ldap.open('account.gnome.org')
-    l.simple_bind("cn=Directory Manager", ldap_password)
-except ldap.LDAPError, e:
-    print >>sys.stderr, e
-    sys.exit(1)
-
-# Import the various LDAP functions from the create-auth script.
-def _get_group_from_ldap(group):
-
-    filter = ldap.filter.filter_format('(&(objectClass=posixGroup)(cn=%s))', (group, ))
-    results = l.search_s(LDAP_GROUP_BASE, ldap.SCOPE_SUBTREE, filter, ('member', ))
-
-    members = set()
-
-    for _, attr in results:
-        for userid in attr['member']:
-            splitentry = userid.split(',')
-            singleentry = splitentry[0]
-            splitteduid = singleentry.split('=')
-            uid = splitteduid[1]
-
-            members.add(uid)
-
-    return members
-
-def get_uids_from_group(group):
-    people = _get_group_from_ldap(group)
-
-    people.discard('root')
-    people.discard('sysadmin')
-    people.discard('translations')
-    people.discard('gitadmin')
-    people.discard('otaylor')
-    people.discard('puiterwijk')
-    people.discard('av')
-
-    return people
-
 def add_remove_comment_to_user(username, group):
     new_comment = 'Removed from group %s by cleanup-inactive-ldap-accounts at %s.' % (group, datetime.date.today())
-    filter = ldap.filter.filter_format('(uid=%s)', (username, ))
-    results = l.search_s(LDAP_USER_BASE, ldap.SCOPE_SUBTREE, filter, ('uid', 'cn', 'description', 'mail', ))
 
-    if not len(results) > 0:
-        # Something went very wrong here...
-        return False
+    ldap_fields = glu.get_attributes_from_ldap(username, 'cn', 'description', 'mail')
+    current_comment = ldap_fields[2]
+    name = ldap_fields[1]
+    mail = ldap_fields[3]
 
-    try:
-        current_comment = results[0][1]['description'][0]
-
-        has_description = True
-    except KeyError:
-        has_description = False
-
-    if has_description == False:
+    if current_comment is None:
         comment = new_comment
 
-        update_comment = [(ldap.MOD_ADD, 'description', comment)]
-        l.modify_s('uid=%s,%s' % (username, LDAP_USER_BASE), update_comment)
-    elif has_description == True:
-        comment = '%s %s' % (current_comment, new_comment)
+        glu.add_or_update_description(username, comment, add=True)
+    else:
+        comment = '%s. %s' % (current_comment, new_comment)
 
-        update_comment = [(ldap.MOD_REPLACE, 'description', comment)]
-        l.modify_s('uid=%s,%s' % (username, LDAP_USER_BASE), update_comment)
-
-    name = results[0][1]['cn'][0]
-    mail = results[0][1]['mail'][0]
+        glu.add_or_update_description(username, comment, update=True)
 
     form_letter = """
 Hello %s, your membership of the group %s has been automatically removed, due to inactivity.
@@ -153,21 +101,24 @@ the GNOME Accounts Team""" % (name, group)
     return True
 
 
-gnomecvs_users = (get_uids_from_group('gnomecvs'))
-ftpadmin_users = (get_uids_from_group('ftpadmin'))
+excludes = ['root', 'sysadmin', 'gitadmin', 'translations',
+            'gitadmin', 'otaylor', 'puiterwijk', 'av']
+
+gnomecvs_users = (glu.get_uids_from_group('gnomecvs', excludes))
+ftpadmin_users = (glu.get_uids_from_group('ftpadmin', excludes))
 
 for gnomecvs_user in gnomecvs_users:
     if not user_is_current(gnomecvs_user):
         if options.verbose:
             print ("Removing user %s from gnomecvs" % gnomecvs_user, end='\n')
-        remove_members = [ (ldap.MOD_DELETE, 'member','uid=%s,%s' % (gnomecvs_user, LDAP_USER_BASE)) ]
-        l.modify_s('cn=gnomecvs,%s' % LDAP_GROUP_BASE, remove_members)
+
+        glu.remove_user_from_ldap_group(gnomecvs_user, 'gnomecvs')
         add_remove_comment_to_user(gnomecvs_user, 'gnomecvs')
 
 for ftpadmin_user in ftpadmin_users:
     if not user_is_current(ftpadmin_user):
         if options.verbose:
             print ("Removing user %s from ftpadmin" % ftpadmin_user, end='\n')
-        remove_members = [ (ldap.MOD_DELETE, 'member','uid=%s,%s' % (ftpadmin_user, LDAP_USER_BASE)) ]
-        l.modify_s('cn=ftpadmin,%s' % LDAP_GROUP_BASE, remove_members)
+
+        glu.remove_user_from_ldap_group(ftpadmin_user, 'ftpadmin')
         add_remove_comment_to_user(gnomecvs_user, 'ftpadmin')
