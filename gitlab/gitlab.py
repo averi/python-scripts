@@ -62,8 +62,10 @@ class Gitlab:
 
         try:
             response = urllib2.urlopen(req)
+
+            print 'Key for username with id %i has been added' % (user_id)
         except urllib2.HTTPError:
-            print 'Key for username with id %i is registered already' % (user_id)
+            pass
 
     def list_group_members(self, group, members=[]):
         import urllib2
