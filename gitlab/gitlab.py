@@ -37,11 +37,9 @@ class Gitlab:
             next_url = the_page.split(';')[1].split(',')[1].replace('<','').replace('>','').replace(' ', '')
 
         for user in data:
-            try:
-                if user['identities'][0]['provider'] == 'ldapmain':
-                    users[user['id']] = user['identities'][0]['extern_uid'].split(',')[0].replace('uid=', '')
-            except IndexError:
-                continue
+            for index, _ in enumerate(user['identities']):
+                 if user['identities'][index]['provider'] == 'ldapmain':
+                     users[user['id']] = user['identities'][index]['extern_uid'].split(',')[0].replace('uid=', '')
 
         if is_last == 'next':
             url = next_url
@@ -86,6 +84,8 @@ class Gitlab:
                 if user['username'] == 'root':
                     pass
                 else:
-                    members.append(user['identities'][0]['extern_uid'].split(',')[0].replace('uid=', ''))
+                    for index, _ in enumerate(user['identities']):
+                         if user['identities'][index]['provider'] == 'ldapmain':
+                            members.append(user['identities'][index]['extern_uid'].split(',')[0].replace('uid=', ''))
 
         return members
