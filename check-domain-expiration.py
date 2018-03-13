@@ -13,10 +13,10 @@ if len(argv) < 2:
     exit(1)
 
 domain = argv[1]
-w = whois.whois(domain)
-
-if (w.expiration_date and w.status) == None:
-    print 'The domain does not exist, exiting...'
+try:
+    w = whois.whois(domain)
+except whois.parser.PywhoisError as e:
+    print e
     exit(1)
 
 if type(w.expiration_date) == list:
