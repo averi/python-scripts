@@ -41,7 +41,7 @@ class Gnome_ldap_utils:
     def get_attributes_from_ldap(self, uid, attr, *attrs):
         import ldap.filter
 
-        results = [] 
+        results = []
 
         filter = ldap.filter.filter_format('(uid=%s)', (uid, ))
         if len(attrs) > 0:
@@ -61,7 +61,10 @@ class Gnome_ldap_utils:
         if len(results) > 0:
             return results
         elif len(result) > 0:
-            return result[0][1][attr][0]
+            try:
+                return result[0][1][attr][0]
+            except KeyError:
+                return None
         else:
             return None
 

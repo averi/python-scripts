@@ -102,7 +102,7 @@ the GNOME Accounts Team""" % (name, group)
 
 
 excludes = ['root', 'sysadmin', 'gitadmin', 'translations',
-            'gitadmin', 'otaylor', 'puiterwijk', 'av']
+            'gitadmin', 'otaylor', 'puiterwijk', 'av', 'averi']
 
 gnomecvs_users = (glu.get_uids_from_group('gnomecvs', excludes))
 ftpadmin_users = (glu.get_uids_from_group('ftpadmin', excludes))

@@ -1,16 +1,14 @@
 #!/usr/bin/python
 
 import socket
-import calendar
 import smtplib
 import string
 import sys
 import os
+import datetime as dt
 
 from email.mime.text import MIMEText
-from time import strftime, gmtime, strptime, localtime, time
 from optparse import OptionParser
-from datetime import date
 
 sys.path.append('/home/admin/bin')
 from gnome_ldap_utils import *
@@ -37,20 +35,25 @@ parser.add_option("--remove-expired-foundation-members",
 parser.add_option("--generate-membership-list",
                   action="store_true", default=False,
                   help="Generate and publish the Foundation membership list that will appear at "
-                       "http://www.gnome.org/foundation/membership")
+                       "https://www.gnome.org/foundation/membership")
 
 (options, args) = parser.parse_args()
+
+if len(sys.argv) == 1:
+    parser.print_help()
+    sys.exit(1)
 
 execfile('/home/admin/secret/freeipa')
 
 glu = Gnome_ldap_utils(LDAP_GROUP_BASE, LDAP_HOST, LDAP_USER_BASE, 'cn=Directory Manager', ldap_password)
 
-TODAY = strftime("%Y-%m-%d", gmtime())
-
+today = dt.date.today()
 foundationmembers = glu.get_uids_from_group('foundation')
 
 
-def _get_foundation_fields_from_ldap():
+def send_renewal_emails():
+    _today = str(today)
+
     for member in foundationmembers:
         ldap_fields = glu.get_attributes_from_ldap(member, 'FirstAdded', 'LastRenewedOn', 'mail', 'cn')
 
@@ -60,15 +63,14 @@ def _get_foundation_fields_from_ldap():
         common_name_attr = ldap_fields[4]
         userid_attr = ldap_fields[0]
 
-        if last_renewed_on_attr == TODAY and first_added_attr == TODAY:
-            send_form_letters(new_member_form_letter, mail_attr, common_name_attr, userid_attr)
-        elif last_renewed_on_attr == TODAY:
-            send_form_letters(renewal_form_letter, mail_attr, common_name_attr)
-        else:
-            pass
+        if (first_added_attr and last_renewed_on_attr):
+            if (last_renewed_on_attr == _today) and (first_added_attr == _today):
+                send_form_letters(new_member_form_letter, mail_attr, common_name_attr, userid_attr)
+            elif last_renewed_on_attr == _today:
+                send_form_letters(renewal_form_letter, mail_attr, common_name_attr)
 
 
-def _sync_foundation_with_mailusers():
+def sync_foundation_with_mailusers():
     mailusers = glu.get_uids_from_group('mailusers')
 
     for member in foundationmembers:
@@ -77,27 +79,31 @@ def _sync_foundation_with_mailusers():
 
 
 def remove_expired_memberships_from_foundation():
-    now = time()
+    import dateutil.relativedelta as relativedelta
+    delta_2y = relativedelta.relativedelta(years=2)
+    delta_21d = relativedelta.relativedelta(days=21)
     members_list = ''
-    need_renew = {}
 
     for member in foundationmembers:
         ldap_fields = glu.get_attributes_from_ldap(member, 'LastRenewedOn', 'mail', 'cn')
 
         last_renewed_on_attr = ldap_fields[1]
-        convert_to_unix_time = calendar.timegm(strptime(last_renewed_on_attr, '%Y-%m-%d'))
+        last_renewed_on = dt.date(int(last_renewed_on_attr.split('-')[0]), int(last_renewed_on_attr.split('-')[1]), int(last_renewed_on_attr.split('-')[2]))
         mail_attr = ldap_fields[2]
         common_name_attr = ldap_fields[3]
 
-        if member in foundationmembers and convert_to_unix_time < now - 365 * 2 * 24 * 60 * 60:
+        if today == (last_renewed_on + delta_2y - delta_21d):
+           send_form_letters(close_to_expire_membership_form_letter, mail_attr, common_name_attr, last_renewed_on_attr)
+        elif (today - delta_2y) == last_renewed_on:
             print "Removing %s from the foundation LDAP group as the membership expired on %s" % (member, last_renewed_on_attr)
             glu.remove_user_from_ldap_group(member, 'foundation')
             send_form_letters(expired_membership_form_letter, mail_attr, common_name_attr, last_renewed_on_attr)
 
-            need_renew.update({common_name_attr: last_renewed_on_attr})
-            members_list += common_name_attr + ',' + ' ' + need_renew[common_name_attr] + '\n'
+        if (last_renewed_on.year == (today - delta_2y).year) and (last_renewed_on.month == today.month) and (today.day == 15):
+           members_list += common_name_attr + ', ' + last_renewed_on_attr + '\n'
 
-    send_form_letters(renewals_to_foundation_list, 'foundation-list@gnome.org', 'foundation-list', members_list)
+    if len(members_list) > 0:
+      send_form_letters(renewals_to_foundation_list, 'foundation-list@gnome.org', 'foundation-list', members_list)
 
 
 def generate_membership_list():
@@ -123,36 +129,29 @@ def generate_membership_list():
 
 
 def send_form_letters(form_letter, email, name, *args):
-    today = date.today()
     year_month = str(today.year) + '-' + str(today.month)
 
     try:
         if form_letter is new_member_form_letter:
-            msg = MIMEText(form_letter.safe_substitute (
-                   cn = name,
-                   uid = args[0],
-            ), 'plain', 'utf8')
+            msg = MIMEText(form_letter.safe_substitute(cn=name,
+                           uid=args[0]), 'plain', 'utf8')
         elif form_letter is renewal_form_letter:
-            msg = MIMEText(form_letter.safe_substitute (
-                   cn = name,
-            ), 'plain', 'utf8')
-        elif form_letter is expired_membership_form_letter:
-             msg = MIMEText(form_letter.safe_substitute (
-                   cn = name,
-                   last_renewed_on_date = args[0],
-             ), 'plain', 'utf8')
+            msg = MIMEText(form_letter.safe_substitute(cn=name),
+                           'plain', 'utf8')
+        elif form_letter in (expired_membership_form_letter, close_to_expire_membership_form_letter):
+            msg = MIMEText(form_letter.safe_substitute(cn=name,
+                           last_renewed_on_date=args[0]), 'plain', 'utf8')
         elif form_letter is renewals_to_foundation_list:
-             msg = MIMEText(form_letter.safe_substitute (
-                   expired_members = args[0],
-             ), 'plain', 'utf8')
+            msg = MIMEText(form_letter.safe_substitute(expired_members=args[0]),
+                           'plain', 'utf8')
 
         if form_letter is renewals_to_foundation_list:
             msg['Subject'] = "Memberships needing renewal (%s)" % year_month
         else:
             msg['Subject'] = "Your GNOME Foundation Membership"
-        msg['From']    = "GNOME Foundation Membership Committee <noreply@gnome.org>"
-        msg['To']      = "%s" % (email)
-        msg['Reply-To']  = "membership-committee@gnome.org"
+        msg['From'] = "GNOME Foundation Membership Committee <noreply@gnome.org>"
+        msg['To'] = "%s" % (email)
+        msg['Reply-To'] = "membership-committee@gnome.org"
         msg['Cc'] = "membership-committee@gnome.org"
         server = smtplib.SMTP("localhost")
         server.sendmail(msg['From'], [msg['To'], msg['Cc']], msg.as_string())
@@ -163,21 +162,24 @@ def send_form_letters(form_letter, email, name, *args):
 
 
 def subscribe_new_members():
+    _today = str(today)
+
     if socket.gethostname() != 'restaurant.gnome.org':
         sys.exit("This function should only be used on restaurant.gnome.org")
 
     f = open('/tmp/new_subscribers', 'w')
 
     for member in foundationmembers:
-        ldap_fields = glu.get_attributes_from_ldap(member, 'FirstAdded', 'LastRenewedOn', 'mail')
+        ldap_fields = glu.get_attributes_from_ldap(member, 'FirstAdded', 'LastRenewedOn', 'uid')
         first_added_attr = ldap_fields[1]
         last_renewed_on_attr = ldap_fields[2]
-        mail_attr = ldap_fields[3]
+        uid_attr = ldap_fields[3]
+        gnome_alias = '%s@gnome.org' % (uid_attr)
 
-        if first_added_attr == TODAY:
-            f.write(str(mail_attr) + '\n')
-        elif last_renewed_on_attr == TODAY:
-            f.write(str(mail_attr) + '\n')
+        if first_added_attr == _today:
+            f.write(str(gnome_alias) + '\n')
+        elif last_renewed_on_attr == _today:
+            f.write(str(gnome_alias) + '\n')
         else:
             pass
 
@@ -206,8 +208,8 @@ Board of Directors, and you can also put yourself forward as a candidate for
 the Board. There are many other benefits to being a member, including having
 your blog on Planet GNOME, a @gnome.org email address, an Owncloud account,
 your own blog hosted within the GNOME Infrastructure and the ability to apply
-for travel subsidies. A full list of the benefits and the guidelines to obtain them
-is available at:
+for travel subsidies. A full list of the benefits and the guidelines to obtain
+them is available at:
 
    https://wiki.gnome.org/MembershipCommittee/MembershipBenefits
 
@@ -327,6 +329,33 @@ Additionally, please give a look at the Membership benefits:
 Thanks,
   The GNOME Membership and Elections Committee""")
 
+close_to_expire_membership_form_letter = string.Template("""
+Dear $cn,
+
+from our records it seems your GNOME Foundation Membership is about to expire within
+three (3) weeks starting from today as it was las renewed on $last_renewed_on_date (YYYY-MM-DD).
+Membership duration is currently set to be two years.
+
+If you want to continue being a member of the GNOME Foundation please make sure to submit
+a renewal request at https://foundation.gnome.org/membership/apply. If you did
+so already, please ignore this e-mail and wait for the GNOME Foundation Membership
+Committee to get back to you.
+
+More details on when your membership was last renewed can be found on your profile page
+at https://account.gnome.org under the 'Last Renewed on date' field.
+
+In the case you feel your contributions would not be enough for the membership
+renewal to happen you can apply for the Emeritus status:
+
+  https://wiki.gnome.org/MembershipCommittee/EmeritusMembers
+
+Additionally, please give a look at the Membership benefits:
+
+  https://wiki.gnome.org/MembershipCommittee/MembershipBenefits
+
+Thanks,
+  The GNOME Membership and Elections Committee""")
+
 renewals_to_foundation_list = string.Template("""
 Hi,
 
@@ -350,19 +379,20 @@ Cheers,
 
 def main():
     if options.send_form_letters:
-        _get_foundation_fields_from_ldap()
+        send_renewal_emails()
 
     if options.automatic_subscriptions:
         subscribe_new_members()
 
     if options.sync_foundation_with_mailusers:
-        _sync_foundation_with_mailusers()
+        sync_foundation_with_mailusers()
 
     if options.remove_expired_foundation_members:
         remove_expired_memberships_from_foundation()
 
     if options.generate_membership_list:
         generate_membership_list()
+
 
 if __name__ == "__main__":
     main()

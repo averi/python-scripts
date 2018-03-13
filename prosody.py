@@ -1,6 +1,6 @@
 #!/usr/bin/python
 # Author: Andrea Veri <av@gnome.org>
-# Target host: chooser.gnome.org
+# Target host: palette.gnome.org
 # Description: script to automatize new Prosody user creation at jabber.gnome.org.
 
 import random
@@ -9,6 +9,11 @@ import pexpect
 from email.mime.text import MIMEText
 import smtplib
 import sys
+import os
+
+if os.getuid() != 0:
+    sys.exit("The script has to be run as root")
+
 
 def create_prosody_account():
 
@@ -17,7 +22,7 @@ def create_prosody_account():
     username = raw_input('Desired username: ')
     email = raw_input('Email to send instructions to: ')
 
-    s = string.lowercase+string.digits 
+    s = string.lowercase+string.digits
     random_password = ''.join(random.sample(s, 10))
 
     child = pexpect.spawn ('prosodyctl adduser %s@jabber.gnome.org' % (username))

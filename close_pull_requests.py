@@ -76,7 +76,7 @@ def fetch_repositories(url):
         sys.exit(1)
 
     req = Request(url)
-    req.add_header('Authorization', 'token %s' % auth_token)    
+    req.add_header('Authorization', 'token %s' % auth_token)
     response = urlopen(req)
     content = response.read()
     parsed_json = json.loads(content)
@@ -89,7 +89,7 @@ def fetch_repositories(url):
         repo_name = repository['name']
         if options.verbose:
             print 'Appending %s to the repositories list' % repo_name
-   
+
         repositories.append(repo_name)
 
     if is_last == 'next':

@@ -8,7 +8,7 @@ import shutil
 import sys
 from optparse import OptionParser
 
-usage = "usage: %prog -c configuration_file [-i/-l] [-i/package_name]"
+usage = "usage: %prog -c configuration_file [-i/-l] [-i package_name]"
 parser = OptionParser(usage)
 
 parser.add_option("-c", "--config-file",
@@ -30,7 +30,7 @@ parser.add_option("-l", "--list-signatures",
 config = ConfigParser.ConfigParser()
 
 if len(sys.argv) == 1:
-    print 'Not enough parameters given, try --help'
+    parser.print_help()
     sys.exit(1)
 
 if not options.config_file:
@@ -91,7 +91,7 @@ def sign_rpm(package):
 
         if sign.returncode == 0:
             print 'Package has been signed with the following key: %s' % gpgkeyid
-            print "Run 'cobbler reposync' as root on combobox to regenerate the repositories metadata"
+            print "Run 'cobbler reposync' as root on expander to regenerate the repositories metadata"
         else:
             error = sign.stderr.readlines()
             report_error = error[1:2]
@@ -113,7 +113,7 @@ def install_package():
     packagename_splitted = package.split('.')
 
     for repo in ['el5', 'el6', 'el7']:
-        for arch in ['i386', 'x86_64', 'noarch', 'SRPMS']:
+        for arch in ['i386', 'x86_64', 'aarch64', 'noarch', 'SRPMS']:
             if repo in packagename_splitted:
                 if arch in packagename_splitted:
                     dest = os.path.join(reposdir, repo, arch)
@@ -132,11 +132,17 @@ def install_package():
 
 def main():
 
+    if options.install and options.list_signatures:
+        print 'The -i and -l flags are mutually exclusive'
+        sys.exit(1)
+
     if options.install:
         install_package()
-
-    if options.list_signatures:
+    elif options.list_signatures:
         list_rpm_files_signature()
+    else:
+        parser.print_help()
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
